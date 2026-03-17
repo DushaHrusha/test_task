@@ -1,3 +1,5 @@
+// data/datasources/excursions_local_data_source.dart
+
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:test_task/data/models/excursion_model.dart';
 
@@ -6,10 +8,16 @@ class ExcursionsLocalDataSource {
   static const String _metadataBoxName = 'excursions_cache_metadata';
   static const Duration _cacheValidDuration = Duration(hours: 24);
 
-  /// Получить бокс для экскурсий (сохраняем как Map)
+  // ✅ Версия кэша - увеличь до 3 чтобы очистить старые данные
+  static const int _cacheVersion = 3;
+  static const String _versionKey = 'cache_version';
+
+  /// Получить бокс для экскурсий
   Future<Box<Map>> _getExcursionsBox() async {
     if (!Hive.isBoxOpen(_boxName)) {
-      return await Hive.openBox<Map>(_boxName);
+      final box = await Hive.openBox<Map>(_boxName);
+      await _checkAndMigrateCacheVersion(box);
+      return box;
     }
     return Hive.box<Map>(_boxName);
   }
@@ -20,6 +28,29 @@ class ExcursionsLocalDataSource {
       return await Hive.openBox(_metadataBoxName);
     }
     return Hive.box(_metadataBoxName);
+  }
+
+  /// ✅ Проверяем версию кэша и очищаем если устарела
+  Future<void> _checkAndMigrateCacheVersion(Box box) async {
+    try {
+      final metadataBox = await _getMetadataBox();
+      final currentVersion = metadataBox.get(_versionKey) as int?;
+
+      if (currentVersion == null || currentVersion != _cacheVersion) {
+        print(
+          '⚠️ Excursions cache version mismatch (current: $currentVersion, required: $_cacheVersion)',
+        );
+        print('🗑️ Clearing excursions cache...');
+        await box.clear();
+        await metadataBox.put(_versionKey, _cacheVersion);
+        await metadataBox.delete('last_cache_update');
+        print(
+          '✅ Excursions cache cleared and version updated to $_cacheVersion',
+        );
+      }
+    } catch (e) {
+      print('❌ Error checking excursions cache version: $e');
+    }
   }
 
   /// Сохранить список экскурсий в кэш
@@ -36,9 +67,19 @@ class ExcursionsLocalDataSource {
     // Очищаем старый кэш
     await box.clear();
 
-    // Сохраняем экскурсии как JSON
+    // Сохраняем только валидные экскурсии
+    int cachedCount = 0;
     for (var excursion in excursionsWithTimestamp) {
-      await box.put(excursion.id, excursion.toJson());
+      if (excursion.isValid()) {
+        try {
+          await box.put(excursion.id, excursion.toJson());
+          cachedCount++;
+        } catch (e) {
+          print('⚠️ Failed to cache excursion ${excursion.id}: $e');
+        }
+      } else {
+        print('⚠️ Skipping invalid excursion ${excursion.id}');
+      }
     }
 
     // Сохраняем время последнего обновления
@@ -47,25 +88,50 @@ class ExcursionsLocalDataSource {
       DateTime.now().toIso8601String(),
     );
 
-    print('💾 Cached ${excursions.length} excursions');
+    print('💾 Cached $cachedCount valid excursions');
   }
 
   /// Сохранить одну экскурсию в кэш
   Future<void> cacheExcursion(Excursion excursion) async {
+    if (!excursion.isValid()) {
+      print('⚠️ Cannot cache invalid excursion ${excursion.id}');
+      return;
+    }
+
     final box = await _getExcursionsBox();
     final excursionWithTimestamp = excursion.copyWith(cachedAt: DateTime.now());
-    await box.put(excursion.id, excursionWithTimestamp.toJson());
-    print('💾 Cached excursion #${excursion.id}');
+
+    try {
+      await box.put(excursion.id, excursionWithTimestamp.toJson());
+      print('💾 Cached excursion #${excursion.id}');
+    } catch (e) {
+      print('⚠️ Failed to cache excursion ${excursion.id}: $e');
+    }
   }
 
-  /// Получить все экскурсии из кэша
+  /// Получить все экскурсии из кэша (с фильтрацией битых данных)
   Future<List<Excursion>> getCachedExcursions() async {
     final box = await _getExcursionsBox();
-    final excursions =
-        box.values
-            .map((json) => Excursion.fromJson(Map<String, dynamic>.from(json)))
-            .toList();
-    print('📂 Retrieved ${excursions.length} excursions from cache');
+    final excursions = <Excursion>[];
+
+    for (var json in box.values) {
+      try {
+        final excursion = Excursion.fromJson(Map<String, dynamic>.from(json));
+
+        // ✅ Фильтруем невалидные объекты
+        if (excursion.isValid()) {
+          excursions.add(excursion);
+        } else {
+          print('⚠️ Skipping invalid excursion from cache: ${excursion.id}');
+        }
+      } catch (e) {
+        print('⚠️ Failed to parse excursion from cache: $e');
+        // Пропускаем битые данные
+        continue;
+      }
+    }
+
+    print('📂 Retrieved ${excursions.length} valid excursions from cache');
     return excursions;
   }
 
@@ -73,9 +139,22 @@ class ExcursionsLocalDataSource {
   Future<Excursion?> getCachedExcursionById(int id) async {
     final box = await _getExcursionsBox();
     final json = box.get(id);
+
     if (json != null) {
-      print('📂 Retrieved excursion #$id from cache');
-      return Excursion.fromJson(Map<String, dynamic>.from(json));
+      try {
+        final excursion = Excursion.fromJson(Map<String, dynamic>.from(json));
+
+        if (excursion.isValid()) {
+          print('📂 Retrieved excursion #$id from cache');
+          return excursion;
+        } else {
+          print('⚠️ Excursion #$id is invalid');
+          return null;
+        }
+      } catch (e) {
+        print('⚠️ Failed to parse excursion #$id: $e');
+        return null;
+      }
     }
     return null;
   }
@@ -135,7 +214,7 @@ class ExcursionsLocalDataSource {
     final box = await _getExcursionsBox();
     final metadataBox = await _getMetadataBox();
     await box.clear();
-    await metadataBox.clear();
+    await metadataBox.delete('last_cache_update');
     print('🗑️ Excursions cache cleared');
   }
 

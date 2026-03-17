@@ -52,7 +52,7 @@ class SecondCard extends StatelessWidget {
                         topRight: Radius.circular(context.adaptiveSize(32)),
                       ),
                       child: CachedNetworkImage(
-                        imageUrl: data.imageUrl[0],
+                        imageUrl: data.imageUrl.first,
                         fit: BoxFit.cover,
                         placeholder:
                             (context, url) =>

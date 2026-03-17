@@ -5,12 +5,20 @@ import 'package:test_task/data/models/apartment.dart';
 import 'package:test_task/data/repositories/apartments_local_data_source.dart';
 import 'package:test_task/data/repositories/connectivity_service.dart';
 
-class ApartmentsRepository {
+abstract class ApartmentsRepository {
+  Future<List<Apartment>> getApartments({bool forceRefresh = false});
+  Future<Apartment> getApartmentById(int id);
+  Future<List<Apartment>> refreshApartments();
+  Future<void> clearCache();
+  Future<Map<String, dynamic>> getCacheInfo();
+}
+
+class ApartmentsRepositoryImpl implements ApartmentsRepository {
   final ApiClient _apiClient;
   final ApartmentsLocalDataSource _localDataSource;
   final ConnectivityService _connectivityService;
 
-  ApartmentsRepository({
+  ApartmentsRepositoryImpl({
     required ApiClient apiClient,
     required ApartmentsLocalDataSource localDataSource,
     required ConnectivityService connectivityService,
@@ -18,89 +26,122 @@ class ApartmentsRepository {
        _localDataSource = localDataSource,
        _connectivityService = connectivityService;
 
-  /// Получить все квартиры с умным кэшированием
+  @override
   Future<List<Apartment>> getApartments({bool forceRefresh = false}) async {
-    print('\n🔄 Loading apartments (forceRefresh: $forceRefresh)');
+    print('\n🔄 Loading apartments (hybrid strategy)');
 
     try {
-      // 1. Проверяем интернет-соединение
       final hasInternet = await _connectivityService.hasInternetConnection();
 
-      // 2. Если нет интернета - возвращаем из кэша
-      if (!hasInternet) {
-        print('📱 Loading from cache (no internet)');
+      // ✅ СТРАТЕГИЯ 1: Сразу возвращаем кэш (если есть)
+      if (!forceRefresh) {
         final cachedApartments = await _localDataSource.getCachedApartments();
 
-        if (cachedApartments.isEmpty) {
-          throw NoInternetException(
-            'Нет подключения к интернету и нет сохраненных данных',
-          );
-        }
+        if (cachedApartments.isNotEmpty) {
+          print('✅ Showing cached data (${cachedApartments.length} items)');
 
+          // ✅ СТРАТЕГИЯ 2: Параллельно обновляем в фоне (если есть интернет)
+          if (hasInternet) {
+            _updateCacheInBackground();
+          }
+
+          return cachedApartments;
+        }
+      }
+
+      // ✅ СТРАТЕГИЯ 3: Нет кэша или forceRefresh → загружаем с сервера
+
+      if (!hasInternet) {
+        print('❌ No internet and no cache');
+        throw NoInternetException('Нет подключения к интернету');
+      }
+
+      print('🌐 Fetching from server (no cache or force refresh)');
+      return await _fetchFromServerAndCache();
+    } catch (e) {
+      print('❌ Error: $e');
+
+      // Fallback на кэш при любой ошибке
+      final cachedApartments = await _localDataSource.getCachedApartments();
+      if (cachedApartments.isNotEmpty) {
+        print('📱 Returning cached data as fallback');
         return cachedApartments;
       }
 
-      // 3. Если есть интернет и не требуется принудительное обновление
-      if (!forceRefresh) {
-        final isCacheValid = await _localDataSource.isCacheValid();
-
-        if (isCacheValid) {
-          print('✅ Using valid cache');
-          final cachedApartments = await _localDataSource.getCachedApartments();
-
-          if (cachedApartments.isNotEmpty) {
-            // Параллельно обновляем данные в фоне (опционально)
-            _updateCacheInBackground();
-            return cachedApartments;
-          }
-        }
-      }
-
-      // 4. Загружаем данные с сервера
-      print('🌐 Fetching from server');
-      final response = await _apiClient.get(ApiEndpoints.apartments);
-
-      if (response.data['success'] == true) {
-        // API возвращает данные в формате { items: [...], pagination: {...} }
-        final responseData = response.data['data'];
-        final List<dynamic> data;
-
-        // Поддержка обоих форматов: с пагинацией и без
-        if (responseData is List) {
-          data = responseData;
-        } else if (responseData is Map && responseData.containsKey('items')) {
-          data = responseData['items'] as List;
-        } else {
-          throw ServerException('Неверный формат данных от сервера');
-        }
-
-        final apartments =
-            data
-                .map((json) => Apartment.fromJson(json as Map<String, dynamic>))
-                .toList();
-
-        // 5. Сохраняем в кэш
-        await _localDataSource.cacheApartments(apartments);
-        print(
-          '✅ Data loaded and cached successfully (${apartments.length} items)',
-        );
-
-        return apartments;
-      } else {
-        throw ServerException('Не удалось загрузить квартиры');
-      }
-    } on ServerException catch (e) {
-      print('⚠️ Server error: $e');
-      // При ошибке сервера пытаемся вернуть кэш
-      return await _getFallbackData();
-    } catch (e) {
-      print('❌ Unexpected error: $e');
-      // При любой ошибке пытаемся вернуть кэш
-      return await _getFallbackData();
+      rethrow;
     }
   }
 
-  /// Получить квартиру по ID с кэшированием
+  @override
+  Future<List<Apartment>> refreshApartments() async {
+    print('🔄 Force refreshing apartments (pull-to-refresh)');
+    return await getApartments(forceRefresh: true);
+  }
+
+  // ===== Private методы =====
+
+  /// Загружает с сервера и сохраняет в кэш
+  Future<List<Apartment>> _fetchFromServerAndCache() async {
+    final response = await _apiClient.get(ApiEndpoints.apartments);
+
+    if (response.data['success'] == true) {
+      final responseData = response.data['data'];
+      final List data;
+
+      if (responseData is List) {
+        data = responseData;
+      } else if (responseData is Map && responseData.containsKey('items')) {
+        data = responseData['items'] as List;
+      } else {
+        throw ServerException('Неверный формат данных от сервера');
+      }
+
+      final apartments =
+          data
+              .map((json) => Apartment.fromJson(json as Map<String, dynamic>))
+              .toList();
+
+      // Сохраняем в кэш
+      await _localDataSource.cacheApartments(apartments);
+      print(
+        '✅ Data loaded from server and cached (${apartments.length} items)',
+      );
+
+      return apartments;
+    } else {
+      throw ServerException('Не удалось загрузить квартиры');
+    }
+  }
+
+  /// Обновляет кэш в фоне (не блокирует UI)
+  void _updateCacheInBackground() {
+    print('🔄 Updating cache in background...');
+
+    _fetchFromServerAndCache()
+        .then((apartments) {
+          print(
+            '✅ Background cache update completed (${apartments.length} items)',
+          );
+        })
+        .catchError((error) {
+          print('⚠️ Background cache update failed: $error');
+        });
+  }
+
+  @override
+  Future<void> clearCache() async {
+    await _localDataSource.clearCache();
+  }
+
+  @override
+  Future<Map<String, dynamic>> getCacheInfo() async {
+    final size = await _localDataSource.getCacheSize();
+    final lastUpdate = await _localDataSource.getLastCacheUpdate();
+    final isValid = await _localDataSource.isCacheValid();
+    return {'size': size, 'lastUpdate': lastUpdate, 'isValid': isValid};
+  }
+
+  @override
   Future<Apartment> getApartmentById(int id) async {
     print('\n🔄 Loading apartment #$id');
 
@@ -150,66 +191,19 @@ class ApartmentsRepository {
     }
   }
 
-  /// Принудительно обновить данные
-  Future<List<Apartment>> refreshApartments() async {
-    print('\n🔄 Force refreshing apartments');
-    return await getApartments(forceRefresh: true);
-  }
-
-  /// Очистить кэш
-  Future<void> clearCache() async {
-    await _localDataSource.clearCache();
-  }
-
-  /// Получить информацию о кэше
-  Future<Map<String, dynamic>> getCacheInfo() async {
-    final size = await _localDataSource.getCacheSize();
-    final lastUpdate = await _localDataSource.getLastCacheUpdate();
-    final isValid = await _localDataSource.isCacheValid();
-
-    return {'size': size, 'lastUpdate': lastUpdate, 'isValid': isValid};
-  }
-
-  /// Fallback данные из кэша
   Future<List<Apartment>> _getFallbackData() async {
     print('🔄 Attempting to load fallback data from cache');
     final cachedApartments = await _localDataSource.getCachedApartments();
-
     if (cachedApartments.isEmpty) {
       throw CacheException('Нет доступных данных');
     }
-
-    print('📱 Returning ${cachedApartments.length} apartments from cache');
     return cachedApartments;
   }
-
-  /// Обновить кэш в фоне (не блокирует UI)
-  void _updateCacheInBackground() {
-    print('🔄 Updating cache in background');
-
-    getApartments(forceRefresh: true)
-        .then((apartments) {
-          print('✅ Background cache update completed');
-        })
-        .catchError((error) {
-          print('⚠️ Background cache update failed: $error');
-        });
-  }
-}
-
-// Кастомные исключения
-class ServerException implements Exception {
-  final String message;
-  ServerException(this.message);
-
-  @override
-  String toString() => message;
 }
 
 class NoInternetException implements Exception {
   final String message;
   NoInternetException(this.message);
-
   @override
   String toString() => message;
 }
@@ -217,7 +211,6 @@ class NoInternetException implements Exception {
 class CacheException implements Exception {
   final String message;
   CacheException(this.message);
-
   @override
   String toString() => message;
 }

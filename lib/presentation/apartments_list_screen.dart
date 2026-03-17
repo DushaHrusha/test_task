@@ -143,7 +143,7 @@ class _ApartmentsListScreenState extends State<ApartmentsListScreen>
             );
           }
           // Обработка состояния ошибки
-          else if (state is ApartmentsError) {
+          if (state is ApartmentsError) {
             return Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -155,15 +155,15 @@ class _ApartmentsListScreenState extends State<ApartmentsListScreen>
                     style: TextStyle(fontSize: 18),
                   ),
                   SizedBox(height: 8),
-                  // Text(
-                  //   state. message,
-                  //   style: TextStyle(color: Colors.grey),
-                  //   textAlign: TextAlign.center,
-                  // ),
+                  Text(
+                    state.message,
+                    style: TextStyle(color: Colors.grey),
+                    textAlign: TextAlign.center,
+                  ),
                   SizedBox(height: 16),
                   ElevatedButton(
                     onPressed: () {
-                      context.read<ApartmentCubit>().loadApartments();
+                      context.read<ApartmentCubit>().forceLoadFromServer();
                     },
                     child: Text('Retry'),
                   ),

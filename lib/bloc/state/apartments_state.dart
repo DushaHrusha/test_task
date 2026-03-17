@@ -5,7 +5,8 @@ abstract class ApartmentsState {}
 class ApartmentsInitial extends ApartmentsState {}
 
 class ApartmentsError extends ApartmentsState {
-  ApartmentsError(String string);
+  String message;
+  ApartmentsError(this.message);
 }
 
 class ApartmentsLoading extends ApartmentsState {}

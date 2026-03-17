@@ -40,25 +40,7 @@ class CustomTextFieldWithGradientButton extends StatelessWidget {
             ),
           ),
           GestureDetector(
-            onTap: () {
-              Navigator.push(
-                context,
-                PageRouteBuilder(
-                  pageBuilder:
-                      (context, animation, secondaryAnimation) =>
-                          SignUpScreen(),
-                  transitionsBuilder: (
-                    context,
-                    animation,
-                    secondaryAnimation,
-                    child,
-                  ) {
-                    return FadeTransition(opacity: animation, child: child);
-                  },
-                  transitionDuration: Duration(milliseconds: 500),
-                ),
-              );
-            },
+            onTap: () {},
             child: Container(
               height: context.adaptiveSize(56),
               width: context.adaptiveSize(190),

@@ -7,10 +7,16 @@ class ApartmentsLocalDataSource {
   static const String _metadataBoxName = 'cache_metadata';
   static const Duration _cacheValidDuration = Duration(hours: 24);
 
-  /// Получить бокс для квартир (сохраняем как Map)
+  // ✅ Версия кэша - увеличь до 2 чтобы очистить старые данные
+  static const int _cacheVersion = 2;
+  static const String _versionKey = 'cache_version';
+
+  /// Получить бокс для квартир
   Future<Box<Map>> _getApartmentsBox() async {
     if (!Hive.isBoxOpen(_boxName)) {
-      return await Hive.openBox<Map>(_boxName);
+      final box = await Hive.openBox<Map>(_boxName);
+      await _checkAndMigrateCacheVersion(box);
+      return box;
     }
     return Hive.box<Map>(_boxName);
   }
@@ -21,6 +27,27 @@ class ApartmentsLocalDataSource {
       return await Hive.openBox(_metadataBoxName);
     }
     return Hive.box(_metadataBoxName);
+  }
+
+  /// ✅ Проверяем версию кэша и очищаем если устарела
+  Future<void> _checkAndMigrateCacheVersion(Box box) async {
+    try {
+      final metadataBox = await _getMetadataBox();
+      final currentVersion = metadataBox.get(_versionKey) as int?;
+
+      if (currentVersion == null || currentVersion != _cacheVersion) {
+        print(
+          '⚠️ Cache version mismatch (current: $currentVersion, required: $_cacheVersion)',
+        );
+        print('🗑️ Clearing apartments cache...');
+        await box.clear();
+        await metadataBox.put(_versionKey, _cacheVersion);
+        await metadataBox.delete('last_cache_update');
+        print('✅ Cache cleared and version updated to $_cacheVersion');
+      }
+    } catch (e) {
+      print('❌ Error checking cache version: $e');
+    }
   }
 
   /// Сохранить список квартир в кэш
@@ -37,9 +64,19 @@ class ApartmentsLocalDataSource {
     // Очищаем старый кэш
     await box.clear();
 
-    // Сохраняем квартиры как JSON
+    // Сохраняем только валидные квартиры
+    int cachedCount = 0;
     for (var apartment in apartmentsWithTimestamp) {
-      await box.put(apartment.id, apartment.toJson());
+      if (apartment.isValid()) {
+        try {
+          await box.put(apartment.id, apartment.toJson());
+          cachedCount++;
+        } catch (e) {
+          print('⚠️ Failed to cache apartment ${apartment.id}: $e');
+        }
+      } else {
+        print('⚠️ Skipping invalid apartment ${apartment.id}');
+      }
     }
 
     // Сохраняем время последнего обновления
@@ -48,25 +85,50 @@ class ApartmentsLocalDataSource {
       DateTime.now().toIso8601String(),
     );
 
-    print('💾 Cached ${apartments.length} apartments');
+    print('💾 Cached $cachedCount valid apartments');
   }
 
   /// Сохранить одну квартиру в кэш
   Future<void> cacheApartment(Apartment apartment) async {
+    if (!apartment.isValid()) {
+      print('⚠️ Cannot cache invalid apartment ${apartment.id}');
+      return;
+    }
+
     final box = await _getApartmentsBox();
     final apartmentWithTimestamp = apartment.copyWith(cachedAt: DateTime.now());
-    await box.put(apartment.id, apartmentWithTimestamp.toJson());
-    print('💾 Cached apartment #${apartment.id}');
+
+    try {
+      await box.put(apartment.id, apartmentWithTimestamp.toJson());
+      print('💾 Cached apartment #${apartment.id}');
+    } catch (e) {
+      print('⚠️ Failed to cache apartment ${apartment.id}: $e');
+    }
   }
 
-  /// Получить все квартиры из кэша
+  /// Получить все квартиры из кэша (с фильтрацией битых данных)
   Future<List<Apartment>> getCachedApartments() async {
     final box = await _getApartmentsBox();
-    final apartments =
-        box.values
-            .map((json) => Apartment.fromJson(Map<String, dynamic>.from(json)))
-            .toList();
-    print('📂 Retrieved ${apartments.length} apartments from cache');
+    final apartments = <Apartment>[];
+
+    for (var json in box.values) {
+      try {
+        final apartment = Apartment.fromJson(Map<String, dynamic>.from(json));
+
+        // ✅ Фильтруем невалидные объекты
+        if (apartment.isValid()) {
+          apartments.add(apartment);
+        } else {
+          print('⚠️ Skipping invalid apartment from cache: ${apartment.id}');
+        }
+      } catch (e) {
+        print('⚠️ Failed to parse apartment from cache: $e');
+        // Пропускаем битые данные
+        continue;
+      }
+    }
+
+    print('📂 Retrieved ${apartments.length} valid apartments from cache');
     return apartments;
   }
 
@@ -74,9 +136,22 @@ class ApartmentsLocalDataSource {
   Future<Apartment?> getCachedApartmentById(int id) async {
     final box = await _getApartmentsBox();
     final json = box.get(id);
+
     if (json != null) {
-      print('📂 Retrieved apartment #$id from cache');
-      return Apartment.fromJson(Map<String, dynamic>.from(json));
+      try {
+        final apartment = Apartment.fromJson(Map<String, dynamic>.from(json));
+
+        if (apartment.isValid()) {
+          print('📂 Retrieved apartment #$id from cache');
+          return apartment;
+        } else {
+          print('⚠️ Apartment #$id is invalid');
+          return null;
+        }
+      } catch (e) {
+        print('⚠️ Failed to parse apartment #$id: $e');
+        return null;
+      }
     }
     return null;
   }
@@ -136,7 +211,7 @@ class ApartmentsLocalDataSource {
     final box = await _getApartmentsBox();
     final metadataBox = await _getMetadataBox();
     await box.clear();
-    await metadataBox.clear();
+    await metadataBox.delete('last_cache_update');
     print('🗑️ Cache cleared');
   }
 

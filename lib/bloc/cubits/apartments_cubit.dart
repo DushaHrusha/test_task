@@ -1,22 +1,22 @@
-// bloc/cubits/apartments_cubit.dart
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:test_task/bloc/state/apartments_state.dart';
 import 'package:test_task/data/repositories/apartments_repository.dart';
 
 class ApartmentCubit extends Cubit<ApartmentsState> {
   final ApartmentsRepository apartmentsRepository;
-
   ApartmentCubit({required this.apartmentsRepository})
     : super(ApartmentsInitial()) {
     loadApartments();
   }
-
-  /// Загрузить квартиры
   Future<void> loadApartments({bool forceRefresh = false}) async {
     print(
       '🏠 ApartmentCubit: loadApartments started (forceRefresh: $forceRefresh)',
     );
-    emit(ApartmentsLoading());
+
+    // Показываем loading только если это forceRefresh (pull-to-refresh)
+    if (forceRefresh) {
+      emit(ApartmentsLoading());
+    }
 
     try {
       final apartments = await apartmentsRepository.getApartments(
@@ -24,45 +24,29 @@ class ApartmentCubit extends Cubit<ApartmentsState> {
       );
 
       print('🏠 ApartmentCubit: Loaded ${apartments.length} apartments');
-      print(
-        '🏠 ApartmentCubit: First apartment: ${apartments.isNotEmpty ? apartments.first.title : "none"}',
-      );
-
-      emit(ApartmentsLoaded(apartments));
-    } catch (e, stackTrace) {
-      print('🏠 ApartmentCubit: Error loading apartments: $e');
-      print('🏠 StackTrace: $stackTrace');
-      emit(ApartmentsError(e.toString()));
-    }
-  }
-
-  /// Обновить данные (Pull-to-refresh)
-  Future<void> refreshApartments() async {
-    print('🏠 ApartmentCubit: refreshApartments started');
-
-    // Не показываем loading при refresh, если уже есть данные
-    final currentState = state;
-
-    try {
-      final apartments = await apartmentsRepository.refreshApartments();
-      print('🏠 ApartmentCubit: Refreshed ${apartments.length} apartments');
       emit(ApartmentsLoaded(apartments));
     } catch (e) {
-      print('🏠 ApartmentCubit: Refresh error: $e');
-      // Если ошибка при refresh и есть текущие данные - оставляем их
-      if (currentState is ApartmentsLoaded) {
-        print(
-          '🏠 Refresh failed, keeping current ${currentState.apartments.length} apartments',
-        );
+      print('🏠 ApartmentCubit: Error loading apartments: $e');
+
+      // Если уже есть данные в state, оставляем их
+      if (state is ApartmentsLoaded) {
+        print('🏠 Keeping existing data after error');
       } else {
         emit(ApartmentsError(e.toString()));
       }
     }
   }
 
-  /// Принудительно обновить с сервера (игнорирует кэш)
+  /// Pull-to-refresh (с индикатором загрузки)
+  Future<void> refreshApartments() async {
+    print('🏠 ApartmentCubit: refreshApartments started');
+    await loadApartments(forceRefresh: true);
+  }
+
+  /// Принудительная перезагрузка (для кнопки "Retry")
   Future<void> forceLoadFromServer() async {
     print('🏠 ApartmentCubit: forceLoadFromServer started');
+    emit(ApartmentsLoading());
     await loadApartments(forceRefresh: true);
   }
 

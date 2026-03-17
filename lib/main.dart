@@ -25,6 +25,8 @@ import 'package:test_task/data/repositories/vespa_repository.dart';
 import 'package:test_task/presentation/booking_cubit.dart';
 import 'package:test_task/presentation/dates_guests_screen.dart';
 import 'package:test_task/presentation/excursion_booking_service.dart';
+import 'package:test_task/presentation/excursion_detail_screen.dart';
+import 'package:test_task/presentation/vehicle_details_screen.dart';
 import 'package:test_task/unified_booking_service.dart';
 
 Future<void> main() async {
@@ -32,10 +34,31 @@ Future<void> main() async {
 
   await Hive.initFlutter();
 
+  // print('🗑️ [DEBUG] Clearing all cache...');
+  // try {
+  //   await Hive.deleteBoxFromDisk('apartments_cache');
+  //   await Hive.deleteBoxFromDisk('excursions_cache');
+  //   await Hive.deleteBoxFromDisk('cars_cache');
+  //   await Hive.deleteBoxFromDisk('motorcycles_cache');
+  //   await Hive.deleteBoxFromDisk('vespas_cache');
+  //   await Hive.deleteBoxFromDisk('cache_metadata');
+  //   await Hive.deleteBoxFromDisk('vehicles_cache_metadata');
+  //   await Hive.deleteBoxFromDisk('excursions_cache_metadata');
+  //   print('✅ [DEBUG] Cache cleared');
+  // } catch (e) {
+  //   print('⚠️ [DEBUG] Error clearing cache: $e');
+  // }
+
   // ===== СОЗДАЁМ СИНГЛТОНЫ СЕРВИСОВ =====
-  final apiClient = ApiClient(baseUrl: ApiEndpoints.baseUrl);
+  final token = TokenLocalDataSource();
+
+  final apiClient = ApiClient(
+    baseUrl: ApiEndpoints.baseUrl,
+    tokenStorage: token,
+  );
   final connectivityService = ConnectivityService();
   final bookingService = BookingService(apiClient);
+
   final vehicleBookingService = VehicleBookingService(apiClient); // ← Добавьте
   final unifiedBookingService = UnifiedBookingService(apiClient);
   final apartmentsLocalDataSource = ApartmentsLocalDataSource();
@@ -45,13 +68,23 @@ Future<void> main() async {
     apiClient,
   ); // ← Добавьте
   // Repositories
-  final apartmentsRepository = ApartmentsRepository(
+  final BookingsRepository bookingsRepository = BookingsRepositoryImpl(
+    apiClient,
+  );
+  final vehicleBookingsRepository = VehicleBookingRepositoryImpl(apiClient);
+  final ExcursionBookingRepository excursionBookingsRepository =
+      ExcursionBookingRepositoryImpl(apiClient);
+  final authRepository = AuthRepositoryImpl(
+    apiClient: apiClient,
+    tokenStorage: token,
+  );
+  final apartmentsRepository = ApartmentsRepositoryImpl(
     apiClient: apiClient,
     localDataSource: apartmentsLocalDataSource,
     connectivityService: connectivityService,
   );
 
-  final excursionsRepository = ExcursionsRepository(
+  final excursionsRepository = ExcursionsRepositoryImpl(
     apiClient: apiClient,
     localDataSource: excursionsLocalDataSource,
     connectivityService: connectivityService,
@@ -68,19 +101,19 @@ Future<void> main() async {
     localDataSource: vehiclesLocalDataSource,
     connectivityService: connectivityService,
   );
-
   final vespaRepository = VespaRepository(
     apiClient: apiClient,
     localDataSource: vehiclesLocalDataSource,
     connectivityService: connectivityService,
   );
 
-  authCubit = AuthCubit(apiClient: apiClient);
+  authCubit = AuthCubit(authRepository: authRepository);
   await authCubit.initialize();
 
   runApp(
     MultiRepositoryProvider(
       providers: [
+        RepositoryProvider.value(value: bookingsRepository),
         RepositoryProvider.value(value: apartmentsRepository),
         RepositoryProvider.value(value: excursionsRepository),
         RepositoryProvider.value(value: carRepository),
@@ -88,15 +121,15 @@ Future<void> main() async {
         RepositoryProvider.value(value: vespaRepository),
         RepositoryProvider.value(value: connectivityService),
         RepositoryProvider.value(value: vehiclesLocalDataSource),
-        RepositoryProvider.value(value: vehicleBookingService), // ← Добавьте
-        RepositoryProvider.value(value: excursionBookingService), // ← Добавьте
+        RepositoryProvider.value(value: vehicleBookingService),
+        RepositoryProvider.value(value: excursionBookingService),
         RepositoryProvider.value(value: unifiedBookingService),
       ],
       child: MultiBlocProvider(
         providers: [
           BlocProvider<AuthCubit>.value(value: authCubit),
           BlocProvider(
-            create: (context) => ApartmentBookingCubit(bookingService),
+            create: (context) => ApartmentBookingCubit(bookingsRepository),
           ),
           BlocProvider(
             create: (context) => UnifiedBookingCubit(unifiedBookingService),
@@ -113,6 +146,18 @@ Future<void> main() async {
                     ExcursionCubit(excursionsRepository: excursionsRepository),
           ),
           BlocProvider(create: (context) => BookmarksCubit()),
+          BlocProvider(
+            create:
+                (context) =>
+                    ApartmentBookingCubit(context.read<BookingsRepository>()),
+          ),
+          BlocProvider(
+            create:
+                (context) => ExcursionBookingCubit(excursionBookingsRepository),
+          ),
+          BlocProvider(
+            create: (context) => VehicleBookingCubit(vehicleBookingsRepository),
+          ),
         ],
         child: const MyApp(),
       ),

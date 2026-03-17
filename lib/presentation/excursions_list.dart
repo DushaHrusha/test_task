@@ -86,7 +86,6 @@ class _ExcursionsListState extends State<ExcursionsList>
                     opacity: _appBarOpacityAnimation,
                     child: GreyLine(),
                   ),
-                  // В ExcursionsList замените Flexible на:
                   Expanded(
                     child: RefreshIndicator(
                       onRefresh: () async {
@@ -164,7 +163,7 @@ class _ExcursionsListState extends State<ExcursionsList>
                   SizedBox(height: 16),
                   ElevatedButton(
                     onPressed: () {
-                      context.read<ApartmentCubit>().loadApartments();
+                      context.read<ExcursionCubit>().loadExcursions();
                     },
                     child: Text('Retry'),
                   ),

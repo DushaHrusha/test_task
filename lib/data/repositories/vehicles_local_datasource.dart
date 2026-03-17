@@ -1,4 +1,5 @@
 // data/datasources/vehicles_local_datasource.dart
+
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:test_task/data/models/vehicle.dart';
 
@@ -7,11 +8,12 @@ class VehiclesLocalDataSource {
   static const String _motorcyclesBoxName = 'motorcycles_cache';
   static const String _vespasBoxName = 'vespas_cache';
   static const String _metadataBoxName = 'vehicles_cache_metadata';
+
   static const Duration _cacheValidDuration = Duration(hours: 24);
 
-  /// Получить бокс для конкретного типа транспорта
-  Future<Box<Map>> _getVehicleBox(String vehicleType) async {
+  Future<Box> _getVehicleBox(String vehicleType) async {
     String boxName;
+
     switch (vehicleType.toLowerCase()) {
       case 'car':
         boxName = _carsBoxName;
@@ -27,12 +29,12 @@ class VehiclesLocalDataSource {
     }
 
     if (!Hive.isBoxOpen(boxName)) {
-      return await Hive.openBox<Map>(boxName);
+      return await Hive.openBox(boxName);
     }
-    return Hive.box<Map>(boxName);
+
+    return Hive.box(boxName);
   }
 
-  /// Получить бокс для метаданных
   Future<Box> _getMetadataBox() async {
     if (!Hive.isBoxOpen(_metadataBoxName)) {
       return await Hive.openBox(_metadataBoxName);
@@ -40,28 +42,21 @@ class VehiclesLocalDataSource {
     return Hive.box(_metadataBoxName);
   }
 
-  /// Сохранить список транспорта в кэш
   Future<void> cacheVehicles(List<Vehicle> vehicles, String vehicleType) async {
     if (vehicles.isEmpty) return;
 
     final box = await _getVehicleBox(vehicleType);
     final metadataBox = await _getMetadataBox();
 
-    // Добавляем timestamp
     final vehiclesWithTimestamp =
-        vehicles.map((vehicle) {
-          return vehicle.copyWith(cachedAt: DateTime.now());
-        }).toList();
+        vehicles.map((v) => v.copyWith(cachedAt: DateTime.now())).toList();
 
-    // Очищаем старый кэш
     await box.clear();
 
-    // Сохраняем транспорт как JSON
-    for (var vehicle in vehiclesWithTimestamp) {
+    for (final vehicle in vehiclesWithTimestamp) {
       await box.put(vehicle.id, vehicle.toJson());
     }
 
-    // Сохраняем время последнего обновления
     await metadataBox.put(
       'last_cache_update_$vehicleType',
       DateTime.now().toIso8601String(),
@@ -70,7 +65,6 @@ class VehiclesLocalDataSource {
     print('💾 Cached ${vehicles.length} ${vehicleType}s');
   }
 
-  /// Сохранить один транспорт в кэш
   Future<void> cacheVehicle(Vehicle vehicle) async {
     final box = await _getVehicleBox(vehicle.type);
     final vehicleWithTimestamp = vehicle.copyWith(cachedAt: DateTime.now());
@@ -78,7 +72,6 @@ class VehiclesLocalDataSource {
     print('💾 Cached ${vehicle.type} #${vehicle.id}');
   }
 
-  /// Получить весь транспорт из кэша
   Future<List<Vehicle>> getCachedVehicles(String vehicleType) async {
     final box = await _getVehicleBox(vehicleType);
     final vehicles =
@@ -89,7 +82,6 @@ class VehiclesLocalDataSource {
     return vehicles;
   }
 
-  /// Получить транспорт по ID из кэша
   Future<Vehicle?> getCachedVehicleById(int id, String vehicleType) async {
     final box = await _getVehicleBox(vehicleType);
     final json = box.get(id);
@@ -100,7 +92,6 @@ class VehiclesLocalDataSource {
     return null;
   }
 
-  /// Проверить, валиден ли кэш
   Future<bool> isCacheValid(String vehicleType) async {
     try {
       final metadataBox = await _getMetadataBox();
@@ -137,7 +128,6 @@ class VehiclesLocalDataSource {
     }
   }
 
-  /// Получить время последнего обновления кэша
   Future<DateTime?> getLastCacheUpdate(String vehicleType) async {
     try {
       final metadataBox = await _getMetadataBox();
@@ -152,7 +142,6 @@ class VehiclesLocalDataSource {
     return null;
   }
 
-  /// Очистить кэш
   Future<void> clearCache(String vehicleType) async {
     final box = await _getVehicleBox(vehicleType);
     final metadataBox = await _getMetadataBox();
@@ -161,7 +150,6 @@ class VehiclesLocalDataSource {
     print('🗑️ ${vehicleType}s cache cleared');
   }
 
-  /// Очистить весь кэш транспорта
   Future<void> clearAllVehiclesCache() async {
     await clearCache('car');
     await clearCache('motorcycle');
@@ -169,7 +157,6 @@ class VehiclesLocalDataSource {
     print('🗑️ All vehicles cache cleared');
   }
 
-  /// Получить размер кэша
   Future<int> getCacheSize(String vehicleType) async {
     final box = await _getVehicleBox(vehicleType);
     return box.length;

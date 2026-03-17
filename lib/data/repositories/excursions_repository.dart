@@ -5,12 +5,20 @@ import 'package:test_task/data/models/excursion_model.dart';
 import 'package:test_task/data/repositories/connectivity_service.dart';
 import 'package:test_task/data/repositories/excursions_local_data_source.dart';
 
-class ExcursionsRepository {
+abstract class ExcursionsRepository {
+  Future<List<Excursion>> getExcursions({bool forceRefresh = false});
+  Future<Excursion> getExcursionById(int id);
+  Future<List<Excursion>> refreshExcursions();
+  Future<void> clearCache();
+  Future<Map<String, dynamic>> getCacheInfo();
+}
+
+class ExcursionsRepositoryImpl implements ExcursionsRepository {
   final ApiClient _apiClient;
   final ExcursionsLocalDataSource _localDataSource;
   final ConnectivityService _connectivityService;
 
-  ExcursionsRepository({
+  ExcursionsRepositoryImpl({
     required ApiClient apiClient,
     required ExcursionsLocalDataSource localDataSource,
     required ConnectivityService connectivityService,
@@ -26,65 +34,61 @@ class ExcursionsRepository {
       // 1. Проверяем интернет-соединение
       final hasInternet = await _connectivityService.hasInternetConnection();
 
-      // 2. Если нет интернета - возвращаем из кэша
-      if (!hasInternet) {
+      // ✅ СТРАТЕГИЯ 1: Сразу возвращаем кэш (если есть)
+      if (!forceRefresh) {
         print('📱 Loading excursions from cache (no internet)');
         final cachedExcursions = await _localDataSource.getCachedExcursions();
 
-        if (cachedExcursions.isEmpty) {
-          throw NoInternetException(
-            'Нет подключения к интернету и нет сохраненных данных',
-          );
-        }
-
-        return cachedExcursions;
-      }
-
-      // 3. Если есть интернет и не требуется принудительное обновление
-      if (!forceRefresh) {
-        final isCacheValid = await _localDataSource.isCacheValid();
-
-        if (isCacheValid) {
-          print('✅ Using valid excursions cache');
-          final cachedExcursions = await _localDataSource.getCachedExcursions();
-
-          if (cachedExcursions.isNotEmpty) {
-            // Параллельно обновляем данные в фоне (опционально)
+        if (cachedExcursions.isNotEmpty) {
+          print('✅ Showing cached data (${cachedExcursions.length} items)');
+          if (hasInternet) {
             _updateCacheInBackground();
-            return cachedExcursions;
           }
+          return cachedExcursions;
         }
       }
 
-      // 4. Загружаем данные с сервера
-      print('🌐 Fetching excursions from server');
-      final response = await _apiClient.get(ApiEndpoints.excursions);
-
-      if (response.data['success'] == true) {
-        // ← ИСПРАВЛЕНО: извлекаем items из data
-        final Map<String, dynamic> data =
-            response.data['data'] as Map<String, dynamic>;
-        final List<dynamic> items = data['items'] as List;
-
-        final excursions =
-            items
-                .map((json) => Excursion.fromJson(json as Map<String, dynamic>))
-                .toList();
-
-        // 5. Сохраняем в кэш
-        await _localDataSource.cacheExcursions(excursions);
-        print('✅ Excursions loaded and cached successfully');
-
-        return excursions;
-      } else {
-        throw ServerException('Не удалось загрузить экскурсии');
+      if (!hasInternet) {
+        print('❌ No internet and no cache');
+        throw NoInternetException('Нет подключения к интернету');
       }
-    } on ServerException catch (e) {
-      print('⚠️ Server error: $e');
-      return await _getFallbackData();
+
+      print('🌐 Fetching from server (no cache or force refresh)');
+      return await _fetchFromServerAndCache();
     } catch (e) {
-      print('❌ Unexpected error: $e');
-      return await _getFallbackData();
+      print('❌ Error: $e');
+
+      // Fallback на кэш при любой ошибке
+      final cachedApartments = await _localDataSource.getCachedExcursions();
+      if (cachedApartments.isNotEmpty) {
+        print('📱 Returning cached data as fallback');
+        return cachedApartments;
+      }
+
+      rethrow;
+    }
+  }
+
+  Future<List<Excursion>> _fetchFromServerAndCache() async {
+    final response = await _apiClient.get(ApiEndpoints.excursions);
+    if (response.data['success'] == true) {
+      // ← ИСПРАВЛЕНО: извлекаем items из data
+      final Map<String, dynamic> data =
+          response.data['data'] as Map<String, dynamic>;
+      final List<dynamic> items = data['items'] as List;
+
+      final excursions =
+          items
+              .map((json) => Excursion.fromJson(json as Map<String, dynamic>))
+              .toList();
+
+      // 5. Сохраняем в кэш
+      await _localDataSource.cacheExcursions(excursions);
+      print('✅ Excursions loaded and cached successfully');
+
+      return excursions;
+    } else {
+      throw ServerException('Не удалось загрузить экскурсии');
     }
   }
 

@@ -42,8 +42,8 @@ class AuthService {
         ),
       ),
       _storage = const FlutterSecureStorage(),
-      _googleSignIn = GoogleSignIn.instance /*(scopes: ['email', 'profile'])*/ {
-    // Добавляем interceptor для автоматического добавления токена
+      _googleSignIn = GoogleSignIn.instance {
+    // ✅ Обновлённый interceptor
     _dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
@@ -53,11 +53,22 @@ class AuthService {
           }
           handler.next(options);
         },
-        onError: (error, handler) {
-          if (error.response?.statusCode == 401) {
-            // Токен истёк - очищаем и перенаправляем на логин
-            logout();
+        onError: (error, handler) async {
+          // ✅ Проверяем тип ошибки
+          final isNetworkError =
+              error.type == DioExceptionType.connectionTimeout ||
+              error.type == DioExceptionType.connectionError ||
+              error.type == DioExceptionType.receiveTimeout ||
+              error.type == DioExceptionType.sendTimeout;
+
+          // ✅ Логаутим ТОЛЬКО если это 401 И НЕ проблема с интернетом
+          if (error.response?.statusCode == 401 && !isNetworkError) {
+            debugPrint('❌ 401 Unauthorized - token expired, logging out');
+            await logout();
+          } else if (isNetworkError) {
+            debugPrint('⚠️ Network error (не логаутим): ${error.message}');
           }
+
           handler.next(error);
         },
       ),

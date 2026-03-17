@@ -45,7 +45,6 @@ class _BookingHistoryScreenState extends State<BookingHistoryScreen>
             const CustomAppBar(label: "Booking History"),
             const GreyLine(),
             SizedBox(height: context.adaptiveSize(16)),
-            _buildTabBar(),
             Expanded(
               child: BlocBuilder<UnifiedBookingCubit, BookingState>(
                 builder: (context, state) {
@@ -58,7 +57,7 @@ class _BookingHistoryScreenState extends State<BookingHistoryScreen>
                   }
 
                   if (state is BookingsLoaded) {
-                    return _buildBookingsList(state);
+                    return _buildBookingsTab(state.all, isUpcoming: true);
                   }
 
                   return _buildEmptyView();
@@ -71,42 +70,6 @@ class _BookingHistoryScreenState extends State<BookingHistoryScreen>
       bottomNavigationBar: const BottomBar(
         currentScreen: BookingHistoryScreen(),
       ),
-    );
-  }
-
-  Widget _buildTabBar() {
-    return Container(
-      margin: EdgeInsets.symmetric(horizontal: context.adaptiveSize(30)),
-      decoration: BoxDecoration(
-        color: Colors.grey[200],
-        borderRadius: BorderRadius.circular(context.adaptiveSize(25)),
-      ),
-      child: TabBar(
-        controller: _tabController,
-        indicator: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [BaseColors.accent, BaseColors.primary],
-          ),
-          borderRadius: BorderRadius.circular(context.adaptiveSize(25)),
-        ),
-        labelColor: Colors.white,
-        unselectedLabelColor: Colors.grey[600],
-        labelStyle: context.adaptiveTextStyle(
-          fontSize: 14,
-          fontWeight: FontWeight.w600,
-        ),
-        tabs: const [Tab(text: 'Upcoming'), Tab(text: 'Past')],
-      ),
-    );
-  }
-
-  Widget _buildBookingsList(BookingsLoaded state) {
-    return TabBarView(
-      controller: _tabController,
-      children: [
-        _buildBookingsTab(state.upcoming, isUpcoming: true),
-        _buildBookingsTab(state.past, isUpcoming: false),
-      ],
     );
   }
 
@@ -147,7 +110,10 @@ class _BookingHistoryScreenState extends State<BookingHistoryScreen>
     required bool isUpcoming,
   }) {
     final apartment = booking.apartment;
-
+    print('🖼️ Apartment imageUrl: ${apartment?.imageUrl}');
+    if (apartment?.imageUrl?.isNotEmpty == true) {
+      print('🖼️ First image: ${apartment!.imageUrl!.first}');
+    }
     return _buildBookingCardBase(
       type: 'Apartment',
       typeIcon: Icons.apartment,

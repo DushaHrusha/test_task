@@ -286,7 +286,7 @@ class _CircularMenuScreenState extends State<CircularMenuScreen>
         splashFactory: InkRipple.splashFactory,
         borderRadius: BorderRadius.circular(size / 2),
         onTap: () {
-          context.go(_cachedPages[index - 1]);
+          context.go(_cachedPages[index]);
         },
         child: Container(
           width: size,

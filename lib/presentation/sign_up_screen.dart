@@ -1,14 +1,12 @@
-// lib/presentation/sign_up_screen.dart
+// lib/presentation/screens/sign_up_screen.dart
 
 import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 import 'package:country_picker/country_picker.dart';
 import 'package:test_task/auth_cubit.dart';
-
 import '../core/adaptive_size_extension.dart';
 import '../core/constants/base_colors.dart';
 
@@ -33,11 +31,12 @@ class _SignUpScreenState extends State<SignUpScreen>
   // SMS code input
   final TextEditingController _codeController = TextEditingController();
 
-  // Password input (для альтернативного метода)
+  // Password input
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
-  // Режим: 'initial', 'sms_sent', 'password_login', 'password_register'
+
+  // Auth modes: 'initial', 'sms_sent', 'password_login', 'password_register'
   String _authMode = 'initial';
   String _pendingPhone = '';
 
@@ -81,6 +80,7 @@ class _SignUpScreenState extends State<SignUpScreen>
     _codeController.dispose();
     _passwordController.dispose();
     _nameController.dispose();
+    _emailController.dispose();
     super.dispose();
   }
 
@@ -94,23 +94,15 @@ class _SignUpScreenState extends State<SignUpScreen>
     return BlocListener<AuthCubit, AuthState>(
       listener: (context, state) {
         if (state is AuthAuthenticated) {
+          // ✅ Успешная авторизация
           context.go('/profile');
-        } else if (state is AuthSmsSent) {
-          setState(() {
-            _authMode = 'sms_sent';
-            _pendingPhone = state.phone;
-          });
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(state.message),
-              backgroundColor: Colors.green,
-            ),
-          );
         } else if (state is AuthError) {
+          // ❌ Ошибка
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text(state.message), backgroundColor: Colors.red),
           );
         }
+        // Можно добавить обработку других состояний если нужно
       },
       child: Scaffold(
         backgroundColor: Colors.white,
@@ -406,7 +398,7 @@ class _SignUpScreenState extends State<SignUpScreen>
         // Resend code
         TextButton(
           onPressed: () {
-            context.read<AuthCubit>().sendSmsCode(_pendingPhone);
+            context.read<AuthCubit>().signInWithPhone(_pendingPhone);
           },
           child: Text(
             'Resend code',
@@ -541,10 +533,14 @@ class _SignUpScreenState extends State<SignUpScreen>
 
         SizedBox(height: context.adaptiveSize(16)),
 
+        // Email input
+        _buildEmailInput(context),
+
+        SizedBox(height: context.adaptiveSize(16)),
+
         // Phone input
         _buildPhoneInput(context),
-        // Phone input
-        _buildEmailInput(context),
+
         SizedBox(height: context.adaptiveSize(16)),
 
         // Password input
@@ -605,6 +601,7 @@ class _SignUpScreenState extends State<SignUpScreen>
   // =============================================
   // COMMON WIDGETS
   // =============================================
+
   Widget _buildEmailInput(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
@@ -899,7 +896,14 @@ class _SignUpScreenState extends State<SignUpScreen>
       return;
     }
 
-    context.read<AuthCubit>().sendSmsCode(_fullPhoneNumber);
+    // ✅ Вызываем метод репозитория через Cubit
+    context.read<AuthCubit>().signInWithPhone(_fullPhoneNumber);
+
+    // Переключаем режим на ввод кода
+    setState(() {
+      _authMode = 'sms_sent';
+      _pendingPhone = _fullPhoneNumber;
+    });
   }
 
   void _verifySmsCode() {
@@ -914,7 +918,8 @@ class _SignUpScreenState extends State<SignUpScreen>
       return;
     }
 
-    context.read<AuthCubit>().verifySmsCode(_pendingPhone, code);
+    // ✅ Верифицируем код через Cubit
+    context.read<AuthCubit>().verifyPhoneCode(_pendingPhone, code);
   }
 
   void _loginWithPassword() {
@@ -931,7 +936,7 @@ class _SignUpScreenState extends State<SignUpScreen>
       return;
     }
 
-    context.read<AuthCubit>().loginWithPhone(
+    context.read<AuthCubit>().loginWithPassword(
       phone: _fullPhoneNumber,
       password: password,
     );
@@ -940,7 +945,6 @@ class _SignUpScreenState extends State<SignUpScreen>
   void _registerWithPassword() {
     final name = _nameController.text;
     final email = _emailController.text;
-
     final phone = _phoneController.text.replaceAll(RegExp(r'[^\d]'), '');
     final password = _passwordController.text;
 
@@ -964,30 +968,41 @@ class _SignUpScreenState extends State<SignUpScreen>
       return;
     }
 
-    context.read<AuthCubit>().registerWithPhone(
+    // Валидация email
+    if (_validateEmail(email) != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_validateEmail(email)!),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    // ✅ Теперь работает!
+    context.read<AuthCubit>().register(
       name: name,
       email: email,
       phone: _fullPhoneNumber,
       password: password,
     );
   }
-}
 
-String? _validateEmail(String? value) {
-  if (value == null || value.isEmpty) {
-    return 'Please enter your email';
+  String? _validateEmail(String? value) {
+    if (value == null || value.isEmpty) {
+      return 'Please enter your email';
+    }
+
+    final RegExp emailRegex = RegExp(
+      r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$',
+    );
+
+    if (!emailRegex.hasMatch(value)) {
+      return 'Please enter a valid email address';
+    }
+
+    return null;
   }
-
-  // Email regex pattern
-  final RegExp emailRegex = RegExp(
-    r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$',
-  );
-
-  if (!emailRegex.hasMatch(value)) {
-    return 'Please enter a valid email address';
-  }
-
-  return null;
 }
 
 // =============================================

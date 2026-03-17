@@ -39,24 +39,7 @@ class UnifiedBookingService {
         // Sort by date
         allBookings.sort((a, b) => b.bookingDate.compareTo(a.bookingDate));
 
-        final now = DateTime.now();
-        final upcoming =
-            allBookings
-                .where(
-                  (b) => b.bookingDate.isAfter(now) && b.status != 'cancelled',
-                )
-                .toList();
-        final past =
-            allBookings
-                .where(
-                  (b) =>
-                      b.bookingDate.isBefore(now) ||
-                      b.status == 'cancelled' ||
-                      b.status == 'completed',
-                )
-                .toList();
-
-        return {'upcoming': upcoming, 'past': past, 'all': allBookings};
+        return {'all': allBookings};
       }
 
       throw Exception('Failed to load bookings');

@@ -16,6 +16,190 @@ import 'package:test_task/core/constants/grey_line.dart';
 import 'package:test_task/core/constants/vehicle_booking_service.dart';
 import 'package:test_task/data/models/vehicle.dart';
 import 'package:test_task/data/repositories/vehicle_repository.dart';
+// data/repositories/vehicle_booking_repository.dart
+
+import 'package:dio/dio.dart';
+import 'package:test_task/api_client.dart';
+
+abstract class VehicleBookingRepository {
+  Future<Map<String, dynamic>> createBooking({
+    required int vehicleId,
+    required DateTime pickupDate,
+    required DateTime returnDate,
+    required int passengers,
+    required bool airConditioning,
+    required bool insurance,
+    required bool depositRequired,
+    required String currency,
+    required double totalPrice, // ✅ добавили
+    String? notes,
+  });
+
+  Future<bool> checkAvailability({
+    required int vehicleId,
+    required DateTime pickupDate,
+    required DateTime returnDate,
+  });
+}
+
+class VehicleBookingRepositoryImpl implements VehicleBookingRepository {
+  final ApiClient _apiClient;
+
+  VehicleBookingRepositoryImpl(this._apiClient);
+
+  @override
+  Future<Map<String, dynamic>> createBooking({
+    required int vehicleId,
+    required DateTime pickupDate,
+    required DateTime returnDate,
+    required int passengers,
+    required bool airConditioning,
+    required bool insurance,
+    required bool depositRequired,
+    required String currency,
+    required double totalPrice, // ✅ добавили
+    String? notes,
+  }) async {
+    try {
+      final response = await _apiClient.post(
+        '/vehicle-bookings',
+        data: {
+          'vehicle_id': vehicleId,
+          'pickup_date': pickupDate.toIso8601String().split('T')[0],
+          'return_date': returnDate.toIso8601String().split('T')[0],
+          'passengers': passengers,
+          'air_conditioning': airConditioning,
+          'insurance': insurance,
+          'deposit_required': depositRequired,
+          'currency': currency,
+          'total_price': totalPrice, // ✅ вот здесь
+          if (notes != null) 'notes': notes,
+        },
+      );
+
+      if (response.data['success'] == true) {
+        return Map<String, dynamic>.from(response.data['data']['booking']);
+      }
+
+      throw Exception('Booking failed');
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 409) {
+        throw Exception('These dates are already booked');
+      }
+      throw Exception('Failed to create booking: ${e.message}');
+    }
+  }
+
+  @override
+  Future<bool> checkAvailability({
+    required int vehicleId,
+    required DateTime pickupDate,
+    required DateTime returnDate,
+  }) async {
+    try {
+      final response = await _apiClient.post(
+        '/vehicles/$vehicleId/check-availability',
+        data: {
+          'pickup_date': pickupDate.toIso8601String().split('T')[0],
+          'return_date': returnDate.toIso8601String().split('T')[0],
+        },
+      );
+
+      if (response.data['success'] == true) {
+        return response.data['data']['available'] as bool;
+      }
+
+      return false;
+    } catch (e) {
+      return false;
+    }
+  }
+}
+
+abstract class VehicleBookingState {}
+
+class VehicleBookingInitial extends VehicleBookingState {}
+
+class VehicleBookingLoading extends VehicleBookingState {}
+
+class VehicleBookingSuccess extends VehicleBookingState {
+  final Map<String, dynamic> booking;
+  VehicleBookingSuccess(this.booking);
+}
+
+class VehicleBookingError extends VehicleBookingState {
+  final String message;
+  VehicleBookingError(this.message);
+}
+
+class VehicleAvailabilityLoading extends VehicleBookingState {}
+
+class VehicleAvailabilityResult extends VehicleBookingState {
+  final bool available;
+  VehicleAvailabilityResult(this.available);
+}
+
+class VehicleBookingCubit extends Cubit<VehicleBookingState> {
+  final VehicleBookingRepository _repository;
+
+  VehicleBookingCubit(this._repository) : super(VehicleBookingInitial());
+
+  Future<void> createBooking({
+    required int vehicleId,
+    required DateTime pickupDate,
+    required DateTime returnDate,
+    required int passengers,
+    required bool airConditioning,
+    required bool insurance,
+    required bool depositRequired,
+    required String currency,
+    String? notes,
+    required double totalPrice,
+  }) async {
+    emit(VehicleBookingLoading());
+
+    try {
+      final booking = await _repository.createBooking(
+        vehicleId: vehicleId,
+        pickupDate: pickupDate,
+        returnDate: returnDate,
+        passengers: passengers,
+        airConditioning: airConditioning,
+        insurance: insurance,
+        depositRequired: depositRequired,
+        currency: currency,
+        notes: notes,
+        totalPrice: totalPrice,
+      );
+      emit(VehicleBookingSuccess(booking));
+    } catch (e) {
+      emit(VehicleBookingError(e.toString()));
+    }
+  }
+
+  Future<void> checkAvailability({
+    required int vehicleId,
+    required DateTime pickupDate,
+    required DateTime returnDate,
+  }) async {
+    emit(VehicleAvailabilityLoading());
+
+    try {
+      final available = await _repository.checkAvailability(
+        vehicleId: vehicleId,
+        pickupDate: pickupDate,
+        returnDate: returnDate,
+      );
+      emit(VehicleAvailabilityResult(available));
+    } catch (e) {
+      emit(VehicleBookingError(e.toString()));
+    }
+  }
+
+  void reset() {
+    emit(VehicleBookingInitial());
+  }
+}
 
 class VehicleDetailsScreen extends StatelessWidget {
   final VehicleRepository vehicleRepository;
@@ -203,7 +387,7 @@ class _VehicleDetailsScreenContentState
     return _returnDate!.difference(_pickupDate!).inDays;
   }
 
-  num get _totalPrice {
+  int get _totalPrice {
     if (_totalDays == 0) return 0;
     return vehicle[currentIndex43].pricePerHour * _totalDays;
   }
@@ -771,7 +955,7 @@ class _VehicleDetailsScreenContentState
                   SizedBox(height: 16),
                   ElevatedButton(
                     onPressed: () {
-                      // context.read<VehicleCubit>().retry();
+                      context.read<VehicleCubit>().refreshVehicles();
                     },
                     child: Text('Retry'),
                   ),
@@ -970,14 +1154,12 @@ class _VehicleDetailsScreenContentState
       );
 
       try {
-        // Получаем VehicleBookingService из контекста
-        final vehicleBookingService =
-            RepositoryProvider.of<VehicleBookingService>(context);
-
+        final cubit = context.read<VehicleBookingCubit>();
         // Создаем бронирование
-        await vehicleBookingService.createBooking(
+        await cubit.createBooking(
           vehicleId: vehicle[currentIndex43].id,
           pickupDate: _pickupDate!,
+          totalPrice: _totalPrice.toDouble(),
           returnDate: _returnDate!,
           passengers: 2, // Можно добавить выбор количества пассажиров
           airConditioning: true, // Можно добавить опции

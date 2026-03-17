@@ -308,6 +308,7 @@ class AppRouter {
       '/home/main-menu/vehicle-details-cars',
       '/home/main-menu/vehicle-details-motorcycles',
       '/home/main-menu/vehicle-details-vespa',
+      '/home/main-menu/vehicle-details-vespa',
       '/home/main-menu/excursions-list',
     ];
   }

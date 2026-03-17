@@ -10,15 +10,9 @@ class BookingInitial extends BookingState {}
 class BookingLoading extends BookingState {}
 
 class BookingsLoaded extends BookingState {
-  final List<UnifiedBooking> upcoming;
-  final List<UnifiedBooking> past;
   final List<UnifiedBooking> all;
 
-  BookingsLoaded({
-    required this.upcoming,
-    required this.past,
-    required this.all,
-  });
+  BookingsLoaded({required this.all});
 }
 
 class BookingError extends BookingState {
@@ -38,13 +32,7 @@ class UnifiedBookingCubit extends Cubit<BookingState> {
     try {
       final bookings = await _bookingService.getAllBookings();
 
-      emit(
-        BookingsLoaded(
-          upcoming: bookings['upcoming']!,
-          past: bookings['past']!,
-          all: bookings['all']!,
-        ),
-      );
+      emit(BookingsLoaded(all: bookings['all']!));
     } catch (e) {
       emit(BookingError(e.toString()));
     }

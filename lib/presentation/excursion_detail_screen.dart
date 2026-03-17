@@ -1,8 +1,10 @@
 import 'dart:ui';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:dio/dio.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter/material.dart';
+import 'package:test_task/api_client.dart';
 import 'package:test_task/bloc/cubits/bookmarks_cubit.dart';
 import 'package:test_task/data/models/bookmark.dart';
 import 'package:test_task/core/adaptive_size_extension.dart';
@@ -16,6 +18,179 @@ import 'package:test_task/core/constants/custom_background_with_gradient.dart';
 import 'package:test_task/core/constants/custom_text_field_with_gradient_button.dart';
 import 'package:test_task/data/models/excursion_model.dart';
 import 'package:test_task/presentation/excursion_booking_service.dart';
+
+// bloc/cubits/excursion_booking_cubit.dart
+
+import 'package:flutter_bloc/flutter_bloc.dart';
+
+// ===== States =====
+
+abstract class ExcursionBookingState {}
+
+class ExcursionBookingInitial extends ExcursionBookingState {}
+
+class ExcursionBookingLoading extends ExcursionBookingState {}
+
+class ExcursionBookingSuccess extends ExcursionBookingState {
+  final Map<String, dynamic> booking;
+  ExcursionBookingSuccess(this.booking);
+}
+
+class ExcursionBookingError extends ExcursionBookingState {
+  final String message;
+  ExcursionBookingError(this.message);
+}
+
+// ===== Cubit =====
+
+class ExcursionBookingCubit extends Cubit<ExcursionBookingState> {
+  final ExcursionBookingRepository _repository;
+
+  ExcursionBookingCubit(this._repository) : super(ExcursionBookingInitial());
+
+  Future<void> createBooking({
+    required int excursionId,
+    required DateTime bookingDate,
+    required int adults,
+    required int children,
+    String currency = 'EUR',
+    String? notes,
+  }) async {
+    emit(ExcursionBookingLoading());
+
+    try {
+      print('🎯 Creating excursion booking...');
+      print('  Excursion ID: $excursionId');
+      print('  Date: ${bookingDate.toString().split(' ')[0]}');
+      print('  Adults: $adults, Children: $children');
+      // ✅ ПРОВЕРЯЕМ ТОКЕН ПЕРЕД ЗАПРОСОМ
+
+      print('\n📤 API Request: POST /excursion-bookings');
+      final booking = await _repository.createBooking(
+        excursionId: excursionId,
+        bookingDate: bookingDate,
+        adults: adults,
+        children: children,
+        currency: currency,
+        notes: notes,
+      );
+
+      print('✅ Booking created successfully');
+      emit(ExcursionBookingSuccess(booking));
+    } catch (e) {
+      print('❌ Booking failed: $e');
+
+      // ✅ Проверяем тип ошибки
+      String errorMessage = 'Failed to create booking';
+
+      if (e.toString().contains('No internet connection') ||
+          e.toString().contains('Connection refused') ||
+          e.toString().contains('SocketException')) {
+        errorMessage = 'Please connect to the internet to complete booking';
+      } else {
+        errorMessage = e.toString();
+      }
+
+      // ❌ Убираем rethrow! Просто эмитим ошибку
+      emit(ExcursionBookingError(errorMessage));
+    }
+  }
+
+  void reset() {
+    emit(ExcursionBookingInitial());
+  }
+}
+
+// data/repositories/excursion_booking_repository.dart
+
+abstract class ExcursionBookingRepository {
+  Future<Map<String, dynamic>> createBooking({
+    required int excursionId,
+    required DateTime bookingDate,
+    required int adults,
+    required int children,
+    required String currency,
+    String? notes,
+  });
+
+  Future<List<String>> getBookedDates(int excursionId);
+}
+
+class ExcursionBookingRepositoryImpl implements ExcursionBookingRepository {
+  final ApiClient _apiClient;
+
+  ExcursionBookingRepositoryImpl(this._apiClient);
+
+  @override
+  Future<Map<String, dynamic>> createBooking({
+    required int excursionId,
+    required DateTime bookingDate,
+    required int adults,
+    required int children,
+    required String currency,
+    String? notes,
+  }) async {
+    try {
+      print('\n📤 API Request: POST /excursion-bookings');
+
+      final requestData = {
+        'excursion_id': excursionId,
+        'booking_date': bookingDate.toIso8601String().split('T')[0],
+        'adults': adults,
+        'children': children,
+        'currency': currency,
+        if (notes != null) 'notes': notes,
+      };
+
+      print('📦 Request data: $requestData');
+
+      final response = await _apiClient.post(
+        '/excursion-bookings',
+        data: requestData,
+      );
+
+      print('📥 Response: ${response.data}');
+
+      if (response.data['success'] == true) {
+        return response.data['data']['booking'] as Map<String, dynamic>;
+      }
+
+      throw Exception('Booking failed: ${response.data['message']}');
+    } on DioException catch (e) {
+      print('❌ DioException: ${e.response?.data}');
+
+      if (e.response?.statusCode == 409) {
+        throw Exception('This date is already fully booked');
+      }
+
+      if (e.response?.statusCode == 422) {
+        final errors = e.response?.data['errors'];
+        throw Exception('Validation error: $errors');
+      }
+
+      throw Exception('Failed to create booking: ${e.message}');
+    }
+  }
+
+  @override
+  Future<List<String>> getBookedDates(int excursionId) async {
+    try {
+      final response = await _apiClient.get(
+        '/v1/excursions/$excursionId/booked-dates',
+      );
+
+      if (response.data['success'] == true) {
+        final List<dynamic> dates = response.data['data']['booked_dates'];
+        return dates.map((e) => e.toString()).toList();
+      }
+
+      return [];
+    } catch (e) {
+      print('Error fetching booked dates: $e');
+      return [];
+    }
+  }
+}
 
 class ExcursionDetailScreen extends StatefulWidget {
   final Excursion excursion;
@@ -405,13 +580,14 @@ class _ExcursionDetailScreenState extends State<ExcursionDetailScreen>
                         ),
                         SizedBox(height: context.adaptiveSize(8.0)),
                         Text(
-                          _excursion.transfer,
+                          _excursion.transfer.join(' — '),
                           style: context.adaptiveTextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.w400,
                             color: Color.fromARGB(255, 130, 130, 130),
                           ),
                         ),
+
                         SizedBox(height: context.adaptiveSize(32.0)),
                         Text(
                           'Sights:',
@@ -597,52 +773,43 @@ class _ExcursionDetailScreenState extends State<ExcursionDetailScreen>
   }
 }
 
-// Добавьте метод:
-Future<void> _bookExcursion(BuildContext context, Excursion _excursion) async {
+// Замени метод _bookExcursion на:
+
+Future<void> _bookExcursion(BuildContext context, Excursion excursion) async {
   final result = await showDialog<Map<String, dynamic>>(
     context: context,
     builder:
         (context) => ExcursionBookingDialog(
-          excursionId: _excursion.id,
-          pricePerPerson: _excursion.price,
+          excursionId: excursion.id,
+          pricePerPerson: excursion.price,
         ),
   );
 
   if (result != null) {
-    // Показываем загрузку
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => Center(child: CircularProgressIndicator()),
+    // ✅ Используем ExcursionBookingCubit
+    await context.read<ExcursionBookingCubit>().createBooking(
+      excursionId: excursion.id,
+      bookingDate: result['date'],
+      adults: result['adults'],
+      children: result['children'],
+      currency: 'EUR',
+      notes: 'Booked from mobile app',
     );
 
-    try {
-      final excursionBookingService =
-          RepositoryProvider.of<ExcursionBookingService>(context);
+    // Слушаем результат
+    final state = context.read<ExcursionBookingCubit>().state;
 
-      await excursionBookingService.createBooking(
-        excursionId: _excursion.id,
-        bookingDate: result['date'],
-        adults: result['adults'],
-        children: result['children'],
-        currency: 'EUR',
-        notes: 'Booked from mobile app',
-      );
-
-      Navigator.pop(context); // Закрыть загрузку
-
+    if (state is ExcursionBookingSuccess) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Excursion booked successfully! ✅'),
           backgroundColor: Colors.green,
         ),
       );
-    } catch (e) {
-      Navigator.pop(context); // Закрыть загрузку
-
+    } else if (state is ExcursionBookingError) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Booking failed: ${e.toString()}'),
+          content: Text('Booking failed: ${state.message}'),
           backgroundColor: Colors.red,
         ),
       );

@@ -1,4 +1,5 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:test_task/api_client.dart';
 import 'package:test_task/api_endpoints.dart';
 import 'package:test_task/bloc/state/chat_state.dart';
@@ -11,7 +12,10 @@ class ChatCubit extends Cubit<ChatState> {
 
   ChatCubit()
     : repository = ChatRepositoryImpl(
-        apiClient: ApiClient(baseUrl: ApiEndpoints.baseUrl),
+        apiClient: ApiClient(
+          baseUrl: ApiEndpoints.baseUrl,
+          tokenStorage: TokenLocalDataSource(),
+        ),
       ),
       super(ChatInitial()) {
     // Загружаем сообщения при инициализации
